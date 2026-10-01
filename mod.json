@@ -1,0 +1,18 @@
+{
+    "geode": "5.10.1",
+    "id": "flim.smooth_recorder",
+    "version": "1.0.0",
+    "name": "Smooth Recorder",
+    "developer": "flim",
+    "description": "Frame-by-frame lag-free video rendering tool for any Geometry Dash level. Exports directly to high-quality MP4 using FFmpeg API, completely bypassing performance drops and hardware limitations.",
+    "dependencies": [
+        {
+            "id": "eclipse.ffmpeg_api",
+            "version": "2.0.0",
+            "importance": "required"
+        }
+    ],
+    "resources": {
+        "sprites": []
+    }
+}
