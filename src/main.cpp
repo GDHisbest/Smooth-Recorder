@@ -15,10 +15,11 @@ using namespace geode::prelude;
 
 // --- Глобальное состояние рендера ---
 bool g_isRecording = false;
-int g_targetFPS = 60;
+int g_targetFPS = 60;                         // Теперь парсится из текстового поля
+std::string g_customFPS = "60";               // Строковое значение для поля ввода FPS
 int g_videoBitrate = 15000; 
-std::string g_customResolution = "1920x1080"; // Изменено на ручной ввод строки
-std::string g_videoCodec = "libx264";         // Теперь изменяется через поле ввода
+std::string g_customResolution = "1920x1080"; 
+std::string g_videoCodec = "libx264";         
 std::string g_audioCodec = "aac";
 int g_audioBitrate = 192; 
 float g_audioVolume = 1.0f;
@@ -39,6 +40,7 @@ class RenderSettingsPopup : public Popup<std::string const&>, public TextInputDe
 protected:
     TextInput* m_resInput = nullptr;
     TextInput* m_codecInput = nullptr;
+    TextInput* m_fpsInput = nullptr; // Новое поле ввода для FPS
 
     bool setup(std::string const& value) override {
         auto winSize = CCDirector::sharedDirector()->getWinSize();
@@ -72,12 +74,17 @@ protected:
         m_codecInput->setDelegate(this);
         menu->addChild(m_codecInput);
 
-        // 3. Выбор FPS (Оставили переключатель, так как это влияет на шаг физики напрямую)
-        auto fpsBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create(fmt::format("FPS: {}", g_targetFPS).c_str(), "goldFont.fnt", false, 160.f),
-            this, menu_selector(RenderSettingsPopup::onToggleFPS)
-        );
-        menu->addChild(fpsBtn);
+        // 3. Поле ввода FPS (Вместо старой кнопки)
+        auto fpsLabel = CCLabelBMFont::create("Кадры в секунду (FPS):", "chatFont.fnt");
+        fpsLabel->setScale(0.5f);
+        menu->addChild(fpsLabel);
+
+        m_fpsInput = TextInput::create(160.f, "60", "chatFont.fnt");
+        m_fpsInput->setString(g_customFPS);
+        m_fpsInput->setDelegate(this);
+        // Ограничиваем ввод только цифрами, чтобы пользователь случайно не сломал физику текстом
+        m_fpsInput->setFilter("0123456789"); 
+        menu->addChild(m_fpsInput);
 
         // 4. Громкость
         auto volumeLabel = CCLabelBMFont::create("Громкость Звука:", "chatFont.fnt");
@@ -100,18 +107,6 @@ protected:
         return true;
     }
 
-    void onToggleFPS(CCObject* sender) {
-        // Перед переключением сохраняем текст из полей ввода в глобальные переменные
-        this->saveInputValues();
-
-        if (g_targetFPS == 30) g_targetFPS = 60;
-        else if (g_targetFPS == 60) g_targetFPS = 120;
-        else if (g_targetFPS == 120) g_targetFPS = 240;
-        else g_targetFPS = 30;
-        
-        this->refreshUI();
-    }
-
     void onSliderChanged(CCObject* sender) {
         auto slider = static_cast<Slider*>(sender);
         g_audioVolume = slider->getValue();
@@ -120,27 +115,28 @@ protected:
     void saveInputValues() {
         if (m_resInput) g_customResolution = m_resInput->getString();
         if (m_codecInput) g_videoCodec = m_codecInput->getString();
+        
+        if (m_fpsInput) {
+            g_customFPS = m_fpsInput->getString();
+            try {
+                // Конвертируем строку в число и защищаем от нулевого или отрицательного FPS
+                int parsedFPS = std::stoi(g_customFPS);
+                if (parsedFPS > 0) {
+                    g_targetFPS = parsedFPS;
+                } else {
+                    g_targetFPS = 60; // Фаллбэк, если ввели 0
+                    g_customFPS = "60";
+                }
+            } catch (...) {
+                g_targetFPS = 60; // Фаллбэк в случае ошибки парсинга
+                g_customFPS = "60";
+            }
+        }
     }
 
     void onSaveAndClose(CCObject* sender) {
         this->saveInputValues();
         this->onClose(sender);
-    }
-
-    void refreshUI() {
-        this->onClose(nullptr);
-        RenderSettingsPopup::create()->show();
-    }
-
-public:
-    static RenderSettingsPopup* create() {
-        auto ret = new RenderSettingsPopup();
-        if (ret && ret->initAnchored(360.f, 290.f, "Настройки")) {
-            ret->autorelease();
-            return ret;
-        }
-        CC_SAFE_DELETE(ret);
-        return nullptr;
     }
 };
 
@@ -161,7 +157,7 @@ void startRecordingProcess() {
     config.customVideoArgs = g_customVideoArgs;
     config.customAudioArgs = g_customAudioArgs;
     
-    // Парсим кастомное текстовое разрешение (строку вида "1920x1080")
+    // Пакетный парсинг разрешения
     int width = 1920;
     int height = 1080;
     std::stringstream ss(g_customResolution);
@@ -170,7 +166,6 @@ void startRecordingProcess() {
         config.width = width;
         config.height = height;
     } else {
-        // Фаллбэк на стандарт, если пользователь ввёл некорректную строку
         config.width = 1920;
         config.height = 1080;
     }
@@ -272,5 +267,3 @@ class $modify(MyScheduler, CCScheduler) {
         float percent = (currentPosition / length) * 100.f;
         if (percent > 100.f) percent = 100.f;
         if (percent < 0.f) percent = 0.f;
-
-        g_statusLabel->setString(fmt::format("Rendering: {:.1f}%", percent).c_str());
