@@ -1,0 +1,44 @@
+name: Build Geode Mod
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+        - name: Windows
+          os: windows-latest
+          target: Windows
+        - name: Android32
+          os: ubuntu-latest
+          target: Android32
+        - name: Android64
+          os: ubuntu-latest
+          target: Android64
+
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build Mod
+      uses: geode-sdk/build-geode-mod@main
+      with:
+        bindings: geode-sdk/bindings
+        target: ${{ matrix.config.target }}
+        combine: true
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: geode-sdk/build-geode-mod/combine@main
+      with:
+        id: flim.smooth_recorder
