@@ -17,8 +17,8 @@ using namespace geode::prelude;
 bool g_isRecording = false;
 int g_targetFPS = 60;
 int g_videoBitrate = 15000; 
-std::string g_resolution = "1080p";
-std::string g_videoCodec = "libx264"; 
+std::string g_customResolution = "1920x1080"; // Изменено на ручной ввод строки
+std::string g_videoCodec = "libx264";         // Теперь изменяется через поле ввода
 std::string g_audioCodec = "aac";
 int g_audioBitrate = 192; 
 float g_audioVolume = 1.0f;
@@ -35,8 +35,11 @@ CCLayerColor* g_progressBarBackground = nullptr;
 CCLayerColor* g_progressBarFill = nullptr;
 
 // --- Кастомный продвинутый попап настроек ---
-class RenderSettingsPopup : public Popup<std::string const&> {
+class RenderSettingsPopup : public Popup<std::string const&>, public TextInputDelegate {
 protected:
+    TextInput* m_resInput = nullptr;
+    TextInput* m_codecInput = nullptr;
+
     bool setup(std::string const& value) override {
         auto winSize = CCDirector::sharedDirector()->getWinSize();
         this->setTitle("Настройки Рендера PRO");
@@ -49,21 +52,27 @@ protected:
         auto menu = CCMenu::create();
         menu->setLayout(layout);
 
-        // 1. Выбор Разрешения
-        auto resBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create(fmt::format("Качество: {}", g_resolution).c_str(), "goldFont.fnt", false, 160.f),
-            this, menu_selector(RenderSettingsPopup::onToggleResolution)
-        );
-        menu->addChild(resBtn);
+        // 1. Поле ввода разрешения
+        auto resLabel = CCLabelBMFont::create("Разрешение (ШиринаxВысота):", "chatFont.fnt");
+        resLabel->setScale(0.5f);
+        menu->addChild(resLabel);
 
-        // 2. Выбор Кодека
-        auto codecBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create(fmt::format("Кодек: {}", g_videoCodec).c_str(), "goldFont.fnt", false, 160.f),
-            this, menu_selector(RenderSettingsPopup::onToggleCodec)
-        );
-        menu->addChild(codecBtn);
+        m_resInput = TextInput::create(160.f, "1920x1080", "chatFont.fnt");
+        m_resInput->setString(g_customResolution);
+        m_resInput->setDelegate(this);
+        menu->addChild(m_resInput);
 
-        // 3. Выбор FPS
+        // 2. Поле ввода кастомного кодека
+        auto codecLabel = CCLabelBMFont::create("Кастомный Видео Кодек:", "chatFont.fnt");
+        codecLabel->setScale(0.5f);
+        menu->addChild(codecLabel);
+
+        m_codecInput = TextInput::create(160.f, "libx264", "chatFont.fnt");
+        m_codecInput->setString(g_videoCodec);
+        m_codecInput->setDelegate(this);
+        menu->addChild(m_codecInput);
+
+        // 3. Выбор FPS (Оставили переключатель, так как это влияет на шаг физики напрямую)
         auto fpsBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create(fmt::format("FPS: {}", g_targetFPS).c_str(), "goldFont.fnt", false, 160.f),
             this, menu_selector(RenderSettingsPopup::onToggleFPS)
@@ -82,7 +91,7 @@ protected:
         // 5. Кнопка "Применить"
         auto saveBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Сохранить", "bigFont.fnt", false, 100.f),
-            this, menu_selector(RenderSettingsPopup::onClose)
+            this, menu_selector(RenderSettingsPopup::onSaveAndClose)
         );
         menu->addChild(saveBtn);
 
@@ -91,32 +100,31 @@ protected:
         return true;
     }
 
-    void onToggleResolution(CCObject* sender) {
-        if (g_resolution == "720p") g_resolution = "1080p";
-        else if (g_resolution == "1080p") g_resolution = "2K";
-        else if (g_resolution == "2K") g_resolution = "4K";
-        else g_resolution = "720p";
-        this->refreshUI();
-    }
-
-    void onToggleCodec(CCObject* sender) {
-        if (g_videoCodec == "libx264") g_videoCodec = "libx265";
-        else if (g_videoCodec == "libx265") g_videoCodec = "h264_mediacodec"; 
-        else g_videoCodec = "libx264";
-        this->refreshUI();
-    }
-
     void onToggleFPS(CCObject* sender) {
+        // Перед переключением сохраняем текст из полей ввода в глобальные переменные
+        this->saveInputValues();
+
         if (g_targetFPS == 30) g_targetFPS = 60;
         else if (g_targetFPS == 60) g_targetFPS = 120;
         else if (g_targetFPS == 120) g_targetFPS = 240;
         else g_targetFPS = 30;
+        
         this->refreshUI();
     }
 
     void onSliderChanged(CCObject* sender) {
         auto slider = static_cast<Slider*>(sender);
         g_audioVolume = slider->getValue();
+    }
+
+    void saveInputValues() {
+        if (m_resInput) g_customResolution = m_resInput->getString();
+        if (m_codecInput) g_videoCodec = m_codecInput->getString();
+    }
+
+    void onSaveAndClose(CCObject* sender) {
+        this->saveInputValues();
+        this->onClose(sender);
     }
 
     void refreshUI() {
@@ -127,7 +135,7 @@ protected:
 public:
     static RenderSettingsPopup* create() {
         auto ret = new RenderSettingsPopup();
-        if (ret && ret->initAnchored(360.f, 280.f, "Настройки")) {
+        if (ret && ret->initAnchored(360.f, 290.f, "Настройки")) {
             ret->autorelease();
             return ret;
         }
@@ -153,10 +161,19 @@ void startRecordingProcess() {
     config.customVideoArgs = g_customVideoArgs;
     config.customAudioArgs = g_customAudioArgs;
     
-    config.width = 1920; config.height = 1080;
-    if (g_resolution == "720p") { config.width = 1280; config.height = 720; }
-    else if (g_resolution == "2K") { config.width = 2560; config.height = 1440; }
-    else if (g_resolution == "4K") { config.width = 3840; config.height = 2160; }
+    // Парсим кастомное текстовое разрешение (строку вида "1920x1080")
+    int width = 1920;
+    int height = 1080;
+    std::stringstream ss(g_customResolution);
+    char x;
+    if (ss >> width >> x >> height) {
+        config.width = width;
+        config.height = height;
+    } else {
+        // Фаллбэк на стандарт, если пользователь ввёл некорректную строку
+        config.width = 1920;
+        config.height = 1080;
+    }
 
     g_ffmpegSession = FFmpegAPI::startSession(outputPath.string(), config);
 
@@ -165,15 +182,12 @@ void startRecordingProcess() {
     if (playLayer) {
         auto winSize = CCDirector::sharedDirector()->getWinSize();
         
-        // Фон прогресс-бара (черная полоска)
         g_progressBarBackground = CCLayerColor::create(ccc4(0, 0, 0, 150), 200.f, 10.f);
         g_progressBarBackground->setPosition({winSize.width / 2 - 100.f, winSize.height - 25.f});
         
-        // Заполнение прогресс-бара (зеленая полоска)
         g_progressBarFill = CCLayerColor::create(ccc4(0, 255, 100, 255), 0.f, 10.f);
         g_progressBarFill->setPosition({winSize.width / 2 - 100.f, winSize.height - 25.f});
 
-        // Текст статуса
         g_statusLabel = CCLabelBMFont::create("Rendering: 0%", "chatFont.fnt");
         g_statusLabel->setScale(0.5f);
         g_statusLabel->setPosition({winSize.width / 2, winSize.height - 40.f});
@@ -195,7 +209,6 @@ void stopRecordingProcess() {
         g_ffmpegSession = nullptr;
     }
 
-    // Удаляем элементы прогресс-бара
     if (g_statusLabel) { g_statusLabel->removeFromParent(); g_statusLabel = nullptr; }
     if (g_progressBarBackground) { g_progressBarBackground->removeFromParent(); g_progressBarBackground = nullptr; }
     if (g_progressBarFill) { g_progressBarFill->removeFromParent(); g_progressBarFill = nullptr; }
@@ -227,7 +240,6 @@ class $modify(MyScheduler, CCScheduler) {
             playLayer->m_uiLayer->setVisible(false); 
         }
 
-        // Скрываем элементы нашего прогресс-бара, чтобы они НЕ попали на само видео
         if (g_statusLabel) g_statusLabel->setVisible(false);
         if (g_progressBarBackground) g_progressBarBackground->setVisible(false);
         if (g_progressBarFill) g_progressBarFill->setVisible(false);
@@ -241,7 +253,6 @@ class $modify(MyScheduler, CCScheduler) {
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffer.data());
 
-        // Возвращаем все элементы обратно на экран устройства
         if (playLayer && playLayer->m_uiLayer) playLayer->m_uiLayer->setVisible(hudVisibilityState);
         if (g_statusLabel) g_statusLabel->setVisible(true);
         if (g_progressBarBackground) g_progressBarBackground->setVisible(true);
@@ -254,7 +265,6 @@ class $modify(MyScheduler, CCScheduler) {
         auto playLayer = PlayLayer::get();
         if (!playLayer || !g_statusLabel || !g_progressBarFill) return;
 
-        // Вычисляем процент прохождения уровня на основе положения игрока
         float length = playLayer->m_levelLength;
         if (length <= 0.f) return;
         
@@ -263,8 +273,4 @@ class $modify(MyScheduler, CCScheduler) {
         if (percent > 100.f) percent = 100.f;
         if (percent < 0.f) percent = 0.f;
 
-        // Обновляем текст и ширину зеленой полоски
         g_statusLabel->setString(fmt::format("Rendering: {:.1f}%", percent).c_str());
-        g_progressBarFill->changeWidth(200.f * (percent / 100.f));
-    }
-};
