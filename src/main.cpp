@@ -15,16 +15,24 @@ using namespace geode::prelude;
 
 // --- Глобальное состояние рендера ---
 bool g_isRecording = false;
-int g_targetFPS = 60;                         // Теперь парсится из текстового поля
-std::string g_customFPS = "60";               // Строковое значение для поля ввода FPS
+int g_targetFPS = 60;                         
+std::string g_customFPS = "60";               
 int g_videoBitrate = 15000; 
+std::string g_customVideoBitrate = "15000";   
 std::string g_customResolution = "1920x1080"; 
 std::string g_videoCodec = "libx264";         
-std::string g_audioCodec = "aac";
+std::string g_audioCodec = "aac";             
+std::string g_customAudioBitrate = "192";     
 int g_audioBitrate = 192; 
-float g_audioVolume = 1.0f;
-std::string g_customVideoArgs = "-crf 18";
-std::string g_customAudioArgs = "";
+float g_audioVolume = 1.0f;                   
+std::string g_customVideoArgs = "-crf 18";     
+std::string g_customAudioArgs = "";           
+
+// Список доступных пресетов FFmpeg для циклического выбора
+std::vector<std::string> g_presetsList = {
+    "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"
+};
+size_t g_currentPresetIndex = 5; // По умолчанию "medium"
 std::string g_preset = "medium";
 
 float g_fixedDelta = 1.0f / 60.0f;
@@ -39,72 +47,109 @@ CCLayerColor* g_progressBarFill = nullptr;
 class RenderSettingsPopup : public Popup<std::string const&>, public TextInputDelegate {
 protected:
     TextInput* m_resInput = nullptr;
-    TextInput* m_codecInput = nullptr;
-    TextInput* m_fpsInput = nullptr; // Новое поле ввода для FPS
+    TextInput* m_vCodecInput = nullptr;
+    TextInput* m_fpsInput = nullptr;
+    TextInput* m_vBitrateInput = nullptr;
+    TextInput* m_aCodecInput = nullptr;
+    TextInput* m_aBitrateInput = nullptr;
+    TextInput* m_vArgsInput = nullptr;
+    TextInput* m_aArgsInput = nullptr;
+    CCMenuItemSpriteExtra* m_presetBtn = nullptr;
 
     bool setup(std::string const& value) override {
         auto winSize = CCDirector::sharedDirector()->getWinSize();
         this->setTitle("Настройки Рендера PRO");
 
+        // Создаем ScrollLayer для прокрутки параметров
+        auto scroll = ScrollLayer::create({340.f, 220.f});
+        scroll->setPosition({winSize.width / 2 - 170.f, winSize.height / 2 - 120.f});
+        
+        auto menu = CCMenu::create();
+        menu->setPosition({170.f, 0.f});
+
         auto layout = ColumnLayout::create()
-            ->setGap(8.f)
+            ->setGap(6.f)
             ->setAxisReverse(true)
             ->setAxisAlignment(AxisAlignment::Center);
-
-        auto menu = CCMenu::create();
         menu->setLayout(layout);
 
-        // 1. Поле ввода разрешения
-        auto resLabel = CCLabelBMFont::create("Разрешение (ШиринаxВысота):", "chatFont.fnt");
-        resLabel->setScale(0.5f);
-        menu->addChild(resLabel);
+        auto addInputField = [&](TextInput*& inputVar, const std::string& labelText, const std::string& defaultVal, const std::string& allowedChars = "") {
+            auto label = CCLabelBMFont::create(labelText.c_str(), "chatFont.fnt");
+            label->setScale(0.45f);
+            menu->addChild(label);
 
-        m_resInput = TextInput::create(160.f, "1920x1080", "chatFont.fnt");
-        m_resInput->setString(g_customResolution);
-        m_resInput->setDelegate(this);
-        menu->addChild(m_resInput);
+            inputVar = TextInput::create(180.f, defaultVal.c_str(), "chatFont.fnt");
+            inputVar->setString(defaultVal);
+            inputVar->setDelegate(this);
+            if (!allowedChars.empty()) inputVar->setFilter(allowedChars);
+            menu->addChild(inputVar);
+        };
 
-        // 2. Поле ввода кастомного кодека
-        auto codecLabel = CCLabelBMFont::create("Кастомный Видео Кодек:", "chatFont.fnt");
-        codecLabel->setScale(0.5f);
-        menu->addChild(codecLabel);
+        // Текстовые поля ввода
+        addInputField(m_resInput, "Разрешение (ШиринаxВысота):", g_customResolution);
+        addInputField(m_vCodecInput, "Видео Кодек (например, libx264):", g_videoCodec);
+        addInputField(m_fpsInput, "Кадры в секунду (FPS):", g_customFPS, "0123456789");
+        addInputField(m_vBitrateInput, "Битрейт Видео (kbps):", g_customVideoBitrate, "0123456789");
+        addInputField(m_aCodecInput, "Аудио Кодек (например, aac):", g_audioCodec);
+        addInputField(m_aBitrateInput, "Битрейт Аудио (kbps):", g_customAudioBitrate, "0123456789");
+        addInputField(m_vArgsInput, "Доп. аргументы Видео:", g_customVideoArgs);
+        addInputField(m_aArgsInput, "Доп. аргументы Аудио:", g_customAudioArgs);
 
-        m_codecInput = TextInput::create(160.f, "libx264", "chatFont.fnt");
-        m_codecInput->setString(g_videoCodec);
-        m_codecInput->setDelegate(this);
-        menu->addChild(m_codecInput);
+        // Кнопка выбора пресета из списка (вместо текстового поля)
+        auto presetLabel = CCLabelBMFont::create("Скорость/Качество (Preset):", "chatFont.fnt");
+        presetLabel->setScale(0.45f);
+        menu->addChild(presetLabel);
 
-        // 3. Поле ввода FPS (Вместо старой кнопки)
-        auto fpsLabel = CCLabelBMFont::create("Кадры в секунду (FPS):", "chatFont.fnt");
-        fpsLabel->setScale(0.5f);
-        menu->addChild(fpsLabel);
+        m_presetBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create(g_preset.c_str(), "goldFont.fnt", false, 180.f),
+            this, menu_selector(RenderSettingsPopup::onTogglePreset)
+        );
+        menu->addChild(m_presetBtn);
 
-        m_fpsInput = TextInput::create(160.f, "60", "chatFont.fnt");
-        m_fpsInput->setString(g_customFPS);
-        m_fpsInput->setDelegate(this);
-        // Ограничиваем ввод только цифрами, чтобы пользователь случайно не сломал физику текстом
-        m_fpsInput->setFilter("0123456789"); 
-        menu->addChild(m_fpsInput);
-
-        // 4. Громкость
-        auto volumeLabel = CCLabelBMFont::create("Громкость Звука:", "chatFont.fnt");
-        volumeLabel->setScale(0.5f);
+        // Громкость звука (Ползунок)
+        auto volumeLabel = CCLabelBMFont::create("Громкость Звука на видео:", "chatFont.fnt");
+        volumeLabel->setScale(0.45f);
         menu->addChild(volumeLabel);
 
         auto slider = Slider::create(this, menu_selector(RenderSettingsPopup::onSliderChanged), 0.5f);
         slider->setValue(g_audioVolume);
         menu->addChild(slider);
 
-        // 5. Кнопка "Применить"
+        // Обновляем структуру элементов контента
+        menu->updateLayout();
+        
+        float totalHeight = menu->getScaledContentSize().height + 20.f;
+        menu->setPositionY(totalHeight - 20.f);
+        scroll->m_contentLayer->setContentSize({340.f, totalHeight});
+        scroll->m_contentLayer->addChild(menu);
+        
+        m_mainLayer->addChild(scroll);
+
+        // Кнопка сохранения внизу попапа
         auto saveBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Сохранить", "bigFont.fnt", false, 100.f),
+            ButtonSprite::create("Сохранить изменения", "bigFont.fnt", false, 140.f),
             this, menu_selector(RenderSettingsPopup::onSaveAndClose)
         );
-        menu->addChild(saveBtn);
+        saveBtn->setScale(0.8f);
+        
+        auto saveMenu = CCMenu::create();
+        saveMenu->setPosition({winSize.width / 2, winSize.height / 2 - 125.f});
+        saveMenu->addChild(saveBtn);
+        m_mainLayer->addChild(saveMenu);
 
-        menu->updateLayout();
-        m_mainLayer->addChild(menu);
         return true;
+    }
+
+    // Метод циклического переключения пресетов по клику
+    void onTogglePreset(CCObject* sender) {
+        this->saveInputValues(); // Сохраняем введенный текст перед обновлением UI
+
+        g_currentPresetIndex = (g_currentPresetIndex + 1) % g_presetsList.size();
+        g_preset = g_presetsList[g_currentPresetIndex];
+        
+        // Перерисовываем попап для обновления текста на кнопке пресета
+        this->onClose(nullptr);
+        RenderSettingsPopup::create()->show();
     }
 
     void onSliderChanged(CCObject* sender) {
@@ -114,24 +159,28 @@ protected:
 
     void saveInputValues() {
         if (m_resInput) g_customResolution = m_resInput->getString();
-        if (m_codecInput) g_videoCodec = m_codecInput->getString();
+        if (m_vCodecInput) g_videoCodec = m_vCodecInput->getString();
+        if (m_aCodecInput) g_audioCodec = m_aCodecInput->getString();
+        if (m_vArgsInput) g_customVideoArgs = m_vArgsInput->getString();
+        if (m_aArgsInput) g_customAudioArgs = m_aArgsInput->getString();
         
-        if (m_fpsInput) {
-            g_customFPS = m_fpsInput->getString();
-            try {
-                // Конвертируем строку в число и защищаем от нулевого или отрицательного FPS
-                int parsedFPS = std::stoi(g_customFPS);
-                if (parsedFPS > 0) {
-                    g_targetFPS = parsedFPS;
-                } else {
-                    g_targetFPS = 60; // Фаллбэк, если ввели 0
-                    g_customFPS = "60";
+        auto parseSafely = [](TextInput* input, std::string& fallbackStr, int& targetVar, int defaultVal) {
+            if (input) {
+                fallbackStr = input->getString();
+                try {
+                    int val = std::stoi(fallbackStr);
+                    targetVar = (val > 0) ? val : defaultVal;
+                    if (val <= 0) fallbackStr = std::to_string(defaultVal);
+                } catch (...) {
+                    targetVar = defaultVal;
+                    fallbackStr = std::to_string(defaultVal);
                 }
-            } catch (...) {
-                g_targetFPS = 60; // Фаллбэк в случае ошибки парсинга
-                g_customFPS = "60";
             }
-        }
+        };
+
+        parseSafely(m_fpsInput, g_customFPS, g_targetFPS, 60);
+        parseSafely(m_vBitrateInput, g_customVideoBitrate, g_videoBitrate, 15000);
+        parseSafely(m_aBitrateInput, g_customAudioBitrate, g_audioBitrate, 192);
     }
 
     void onSaveAndClose(CCObject* sender) {
@@ -157,22 +206,17 @@ void startRecordingProcess() {
     config.customVideoArgs = g_customVideoArgs;
     config.customAudioArgs = g_customAudioArgs;
     
-    // Пакетный парсинг разрешения
-    int width = 1920;
-    int height = 1080;
+    int width = 1920; int height = 1080;
     std::stringstream ss(g_customResolution);
     char x;
     if (ss >> width >> x >> height) {
-        config.width = width;
-        config.height = height;
+        config.width = width; config.height = height;
     } else {
-        config.width = 1920;
-        config.height = 1080;
+        config.width = 1920; config.height = 1080;
     }
 
     g_ffmpegSession = FFmpegAPI::startSession(outputPath.string(), config);
 
-    // Инициализируем элементы прогресс-бара на экране
     auto playLayer = PlayLayer::get();
     if (playLayer) {
         auto winSize = CCDirector::sharedDirector()->getWinSize();
@@ -205,65 +249,3 @@ void stopRecordingProcess() {
     }
 
     if (g_statusLabel) { g_statusLabel->removeFromParent(); g_statusLabel = nullptr; }
-    if (g_progressBarBackground) { g_progressBarBackground->removeFromParent(); g_progressBarBackground = nullptr; }
-    if (g_progressBarFill) { g_progressBarFill->removeFromParent(); g_progressBarFill = nullptr; }
-
-    FLAlertLayer::create("Smooth Recorder", "Видео успешно сохранено в MP4 формат!", "Отлично")->show();
-}
-
-// --- Обновление экрана и Прогресс-бар ---
-class $modify(MyScheduler, CCScheduler) {
-    void update(float dt) {
-        if (g_isRecording) {
-            g_fixedDelta = 1.0f / static_cast<float>(g_targetFPS);
-            CCScheduler::update(g_fixedDelta);
-            this->capturePureFrame();
-            this->updateRenderProgressBar();
-        } else {
-            CCScheduler::update(dt);
-        }
-    }
-
-    void capturePureFrame() {
-        if (!g_ffmpegSession) return;
-
-        auto playLayer = PlayLayer::get();
-        bool hudVisibilityState = true;
-
-        if (playLayer && playLayer->m_uiLayer) {
-            hudVisibilityState = playLayer->m_uiLayer->isVisible();
-            playLayer->m_uiLayer->setVisible(false); 
-        }
-
-        if (g_statusLabel) g_statusLabel->setVisible(false);
-        if (g_progressBarBackground) g_progressBarBackground->setVisible(false);
-        if (g_progressBarFill) g_progressBarFill->setVisible(false);
-
-        auto director = CCDirector::sharedDirector();
-        auto winSize = director->getWinSizeInPixels();
-        int width = static_cast<int>(winSize.width);
-        int height = static_cast<int>(winSize.height);
-
-        std::vector<GLubyte> buffer(width * height * 4);
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffer.data());
-
-        if (playLayer && playLayer->m_uiLayer) playLayer->m_uiLayer->setVisible(hudVisibilityState);
-        if (g_statusLabel) g_statusLabel->setVisible(true);
-        if (g_progressBarBackground) g_progressBarBackground->setVisible(true);
-        if (g_progressBarFill) g_progressBarFill->setVisible(true);
-
-        FFmpegAPI::writeVideoFrame(g_ffmpegSession, buffer.data(), width, height);
-    }
-
-    void updateRenderProgressBar() {
-        auto playLayer = PlayLayer::get();
-        if (!playLayer || !g_statusLabel || !g_progressBarFill) return;
-
-        float length = playLayer->m_levelLength;
-        if (length <= 0.f) return;
-        
-        float currentPosition = playLayer->m_player1->m_position.x;
-        float percent = (currentPosition / length) * 100.f;
-        if (percent > 100.f) percent = 100.f;
-        if (percent < 0.f) percent = 0.f;
